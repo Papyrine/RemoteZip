@@ -34,8 +34,9 @@ Design constraints that are not obvious from the code alone:
 
 ## Test infrastructure
 
-- `StubZipServer` mimics nuget.org's observed behavior (206 slices, suffix ranges, 200-with-full-body for unsatisfiable ranges). Toggles: `SupportRanges` (range-less servers), `ExposeContentRange` (browser CORS simulation).
+- `StubZipServer` mimics nuget.org's observed behavior (206 slices, suffix ranges, 200-with-full-body for unsatisfiable ranges). Toggles: `SupportRanges` (range-less servers), `ExposeContentRange` (browser CORS simulation), `Delay` (needed before `MaxConcurrentRequests` can observe overlap — without it each response completes before the next request is issued). Batched reads hit the handler concurrently, so its logs are lock-guarded and their *order* is not meaningful; assert on counts.
 - `Zips.Padded` + `TailLength = 1024` is the pattern for forcing the ranged path; small zips otherwise fit entirely inside the default 128 KiB tail (`DownloadedWholeFile == true`) and reads cost zero requests.
+- **Padding goes last in a test zip, not first.** Since `TailCachedRangeReader` serves anything inside the tail for free, an entry written near the end of the file is read without a request. A fixture that pads first pushes its interesting entries to the end and silently stops testing the ranged path — it will pass, with a lower request count than the test asserts. `Zips.Padded` and the `ZipBuilder` fixtures all append `padding.bin` for this reason; `EntryInsideTail_ReadsWithoutAnotherRequest` is the one test that deliberately inverts it.
 - `ZipBuilder` hand-writes zip bytes for what `ZipArchive` can't produce: archive comments, oversized local extras, encrypted/unsupported-method flags, wrong crcs, zip64 records.
 
 ## Conventions
