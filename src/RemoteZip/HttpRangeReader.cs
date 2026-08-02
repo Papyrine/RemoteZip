@@ -6,7 +6,7 @@
 sealed class HttpRangeReader(HttpClient http, Uri uri, Action<HttpRequestMessage>? configureRequest) :
     IRangeReader
 {
-    public async Task<byte[]> Read(long offset, long length, Cancel cancel)
+    public async Task<ReadOnlyMemory<byte>> Read(long offset, long length, Cancel cancel)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Headers.Range = new(offset, offset + length - 1);

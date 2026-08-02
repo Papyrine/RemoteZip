@@ -12,6 +12,7 @@
     <Using Include="System.Net.Http.Headers" />
     <Using Include="System.IO.Compression" />
     <Using Include="System.IO.Hashing" />
+    <Using Include="System.Runtime.InteropServices" />
     <PackageReference Include="System.IO.Hashing" />
     <PackageReference Include="ProjectDefaults" PrivateAssets="all" />
     <PackageReference Include="SponsorCheck" PrivateAssets="all" />

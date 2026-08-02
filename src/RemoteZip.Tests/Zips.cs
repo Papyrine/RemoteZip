@@ -23,20 +23,16 @@ static class Zips
     }
 
     /// <summary>
-    /// A zip whose first entry is incompressible padding, so with a small TailLength the
-    /// remaining entries sit outside the tail and reads exercise the ranged path.
+    /// A zip whose last entry is incompressible padding, so with a small TailLength the
+    /// preceding entries sit outside the tail fetched when opening and reads have to go
+    /// back to the server. Padding first would put them *inside* the tail, where
+    /// <c>TailCachedRangeReader</c> serves them for free and the ranged path goes untested.
     /// </summary>
     public static byte[] Padded(int paddingLength, params (string Name, string Content)[] files)
     {
         var stream = new MemoryStream();
         using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, true))
         {
-            var padding = archive.CreateEntry("padding.bin", CompressionLevel.NoCompression);
-            using (var paddingStream = padding.Open())
-            {
-                paddingStream.Write(RandomBytes(paddingLength));
-            }
-
             foreach (var (name, content) in files)
             {
                 var entry = archive.CreateEntry(name);
@@ -44,6 +40,10 @@ static class Zips
                 var bytes = Encoding.UTF8.GetBytes(content);
                 entryStream.Write(bytes, 0, bytes.Length);
             }
+
+            var padding = archive.CreateEntry("padding.bin", CompressionLevel.NoCompression);
+            using var paddingStream = padding.Open();
+            paddingStream.Write(RandomBytes(paddingLength));
         }
 
         return stream.ToArray();

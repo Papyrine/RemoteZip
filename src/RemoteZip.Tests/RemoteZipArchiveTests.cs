@@ -62,12 +62,32 @@ public class RemoteZipArchiveTests
     }
 
     [Test]
+    public async Task EntryInsideTail_ReadsWithoutAnotherRequest()
+    {
+        // Padding first, so the entry after it lands in the tail fetched when opening — the
+        // inverse of the Zips.Padded layout. Those bytes are already in memory.
+        var data = new ZipBuilder()
+            .Add("padding.bin", Zips.RandomBytes(4096), method: 0)
+            .Add("tail.txt", "already downloaded")
+            .Build();
+        var (client, server) = Zips.Serve(data);
+        using (client)
+        {
+            var zip = await RemoteZipArchive.Open(client, "https://example/archive.zip", rangedOptions);
+            await Assert.That(zip.DownloadedWholeFile).IsFalse();
+            var content = await zip.ReadText(zip.Find("tail.txt")!);
+            await Assert.That(content).IsEqualTo("already downloaded");
+            await Assert.That(server.Requests).Count().IsEqualTo(1);
+        }
+    }
+
+    [Test]
     public async Task StoredEntry_RoundTrips()
     {
         var payload = Zips.RandomBytes(2000);
         var data = new ZipBuilder()
-            .Add("padding.bin", Zips.RandomBytes(4096), method: 0)
             .Add("stored.bin", payload, method: 0)
+            .Add("padding.bin", Zips.RandomBytes(4096), method: 0)
             .Build();
         var (client, _) = Zips.Serve(data);
         using (client)
@@ -183,8 +203,8 @@ public class RemoteZipArchiveTests
     public async Task LocalExtraField_WithinSlack_SingleRequestPerRead()
     {
         var data = new ZipBuilder()
-            .Add("padding.bin", Zips.RandomBytes(4096), method: 0)
             .Add("target.txt", "payload", localExtraLength: 100)
+            .Add("padding.bin", Zips.RandomBytes(4096), method: 0)
             .Build();
         var (client, server) = Zips.Serve(data);
         using (client)
@@ -200,8 +220,8 @@ public class RemoteZipArchiveTests
     public async Task LocalExtraField_BeyondSlack_CostsOneExtraRequest()
     {
         var data = new ZipBuilder()
-            .Add("padding.bin", Zips.RandomBytes(4096), method: 0)
             .Add("target.txt", "payload", localExtraLength: 600)
+            .Add("padding.bin", Zips.RandomBytes(4096), method: 0)
             .Build();
         var (client, server) = Zips.Serve(data);
         using (client)
@@ -240,8 +260,9 @@ public class RemoteZipArchiveTests
     {
         var data = new ZipBuilder()
             .Add("a.txt", "alpha")
-            .Add("padding.bin", Zips.RandomBytes(300_000), method: 0)
+            .Add("gap.bin", Zips.RandomBytes(300_000), method: 0)
             .Add("b.txt", "beta")
+            .Add("padding.bin", Zips.RandomBytes(4096), method: 0)
             .Build();
         var (client, server) = Zips.Serve(data);
         using (client)
@@ -257,14 +278,73 @@ public class RemoteZipArchiveTests
     }
 
     [Test]
+    public async Task Batch_SeparateClusters_FetchedConcurrently()
+    {
+        var (client, server) = Zips.Serve(Scattered());
+        server.Delay = TimeSpan.FromMilliseconds(50);
+        using (client)
+        {
+            var zip = await RemoteZipArchive.Open(client, "https://example/archive.zip", rangedOptions);
+            var entries = new[]
+            {
+                zip.Find("a.txt")!,
+                zip.Find("b.txt")!,
+                zip.Find("c.txt")!
+            };
+            var contents = await zip.Read(entries);
+            await Assert.That(Encoding.UTF8.GetString(contents[entries[2]])).IsEqualTo("gamma");
+            await Assert.That(server.Requests).Count().IsEqualTo(4);
+            await Assert.That(server.MaxConcurrentRequests).IsGreaterThan(1);
+        }
+    }
+
+    [Test]
+    public async Task Batch_MaxConcurrencyOfOne_KeepsRequestsSerial()
+    {
+        var (client, server) = Zips.Serve(Scattered());
+        server.Delay = TimeSpan.FromMilliseconds(50);
+        using (client)
+        {
+            var options = new RemoteZipOptions
+            {
+                TailLength = 1024,
+                MaxConcurrency = 1
+            };
+            var zip = await RemoteZipArchive.Open(client, "https://example/archive.zip", options);
+            var entries = new[]
+            {
+                zip.Find("a.txt")!,
+                zip.Find("b.txt")!,
+                zip.Find("c.txt")!
+            };
+            var contents = await zip.Read(entries);
+            await Assert.That(Encoding.UTF8.GetString(contents[entries[0]])).IsEqualTo("alpha");
+            await Assert.That(server.Requests).Count().IsEqualTo(4);
+            await Assert.That(server.MaxConcurrentRequests).IsEqualTo(1);
+        }
+    }
+
+    // Three entries too far apart to coalesce, with trailing padding keeping the last of
+    // them outside the tail, so a batched read of all three is three separate requests.
+    static byte[] Scattered() =>
+        new ZipBuilder()
+            .Add("a.txt", "alpha")
+            .Add("gap1.bin", Zips.RandomBytes(300_000), method: 0)
+            .Add("b.txt", "beta")
+            .Add("gap2.bin", Zips.RandomBytes(300_000), method: 0)
+            .Add("c.txt", "gamma")
+            .Add("padding.bin", Zips.RandomBytes(4096), method: 0)
+            .Build();
+
+    [Test]
     public async Task Zip64_Reads()
     {
         var data = new ZipBuilder
             {
                 Zip64 = true
             }
-            .Add("padding.bin", Zips.RandomBytes(4096), method: 0)
             .Add("a.txt", "alpha")
+            .Add("padding.bin", Zips.RandomBytes(4096), method: 0)
             .Build();
         var (client, server) = Zips.Serve(data);
         server.ExposeContentRange = false;

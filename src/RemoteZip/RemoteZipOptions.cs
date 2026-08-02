@@ -18,6 +18,13 @@ public sealed class RemoteZipOptions
     public long MaxBufferLength { get; init; } = 1024L * 1024 * 1024;
 
     /// <summary>
+    /// Maximum number of requests a batched read keeps in flight at once. Entries close
+    /// enough together still coalesce into a single request; this caps how many of the
+    /// requests that remain overlap. Values below one are treated as one.
+    /// </summary>
+    public int MaxConcurrency { get; init; } = 4;
+
+    /// <summary>
     /// Applied to every outgoing request. Blazor WebAssembly callers should use it to call
     /// <c>SetBrowserRequestCache(BrowserRequestCache.NoStore)</c> so the browser HTTP cache
     /// cannot answer one range request with the cached body of another.

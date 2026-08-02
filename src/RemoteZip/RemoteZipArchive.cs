@@ -22,6 +22,7 @@ public sealed class RemoteZipArchive
     readonly List<RemoteZipEntry> entries;
     readonly long centralDirectoryOffset;
     readonly long maxBufferLength;
+    readonly int maxConcurrency;
 
     RemoteZipArchive(
         IRangeReader reader,
@@ -29,14 +30,15 @@ public sealed class RemoteZipArchive
         long fileLength,
         long centralDirectoryOffset,
         bool downloadedWholeFile,
-        long maxBufferLength)
+        RemoteZipOptions options)
     {
         this.reader = reader;
         this.entries = entries;
         FileLength = fileLength;
         this.centralDirectoryOffset = centralDirectoryOffset;
         DownloadedWholeFile = downloadedWholeFile;
-        this.maxBufferLength = maxBufferLength;
+        maxBufferLength = options.MaxBufferLength;
+        maxConcurrency = Math.Max(1, options.MaxConcurrency);
     }
 
     public IReadOnlyList<RemoteZipEntry> Entries => entries;
@@ -64,16 +66,17 @@ public sealed class RemoteZipArchive
         options.ConfigureRequest?.Invoke(request);
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancel);
         response.EnsureSuccessStatusCode();
+        var contentLength = response.Content.Headers.ContentLength;
         using var content = await response.Content.ReadAsStreamAsync(cancel);
 
         if (response.StatusCode != HttpStatusCode.PartialContent)
         {
             // No range support: buffer the whole archive, bounded.
-            var whole = await ReadBounded(content, options.MaxBufferLength, cancel);
+            var whole = await ReadBounded(content, contentLength, options.MaxBufferLength, cancel);
             return await Build(null, whole, 0, whole.Length, options, cancel);
         }
 
-        var tail = await ReadBounded(content, tailLength, cancel);
+        var tail = await ReadBounded(content, contentLength, tailLength, cancel);
 
         // Content-Range gives the tail's absolute position directly, but CORS hides the
         // header from browser callers (it is rarely in Access-Control-Expose-Headers, and
@@ -160,12 +163,10 @@ public sealed class RemoteZipArchive
             throw new RemoteZipException("Corrupt end-of-central-directory record.");
         }
 
-        byte[] directory;
-        int directoryBase;
+        ReadOnlyMemory<byte> directory;
         if (directoryOffset >= bufferStart && directoryOffset + directorySize <= bufferStart + tail.Length)
         {
-            directory = tail;
-            directoryBase = (int) (directoryOffset - bufferStart);
+            directory = tail.AsMemory((int) (directoryOffset - bufferStart), (int) directorySize);
         }
         else
         {
@@ -175,17 +176,16 @@ public sealed class RemoteZipArchive
             }
 
             directory = await httpReader.Read(directoryOffset, directorySize, cancel);
-            directoryBase = 0;
         }
 
         if (directorySize >= 4 &&
-            ZipFormat.UInt32(directory, directoryBase) != ZipFormat.CentralDirectorySignature)
+            ZipFormat.UInt32(directory.Span, 0) != ZipFormat.CentralDirectorySignature)
         {
             throw new RemoteZipException(
                 "Central directory is not at the position the end-of-central-directory record claims. Archives with prepended data are not supported.");
         }
 
-        var entries = ParseCentralDirectory(directory, directoryBase, (int) directorySize, entryCount);
+        var entries = ParseCentralDirectory(directory.Span, entryCount);
 
         var wholeFile = bufferStart == 0;
         IRangeReader reader;
@@ -195,17 +195,20 @@ public sealed class RemoteZipArchive
         }
         else
         {
-            reader = httpReader ?? throw new RemoteZipException("Corrupt central directory position.");
+            var http = httpReader ?? throw new RemoteZipException("Corrupt central directory position.");
+
+            // The tail is in hand already, so entries stored inside it cost no request.
+            reader = new TailCachedRangeReader(http, tail, bufferStart);
         }
 
-        return new(reader, entries, fileLength, directoryOffset, wholeFile, options.MaxBufferLength);
+        return new(reader, entries, fileLength, directoryOffset, wholeFile, options);
     }
 
-    static List<RemoteZipEntry> ParseCentralDirectory(byte[] directory, int directoryBase, int directorySize, long entryCount)
+    static List<RemoteZipEntry> ParseCentralDirectory(ReadOnlySpan<byte> directory, long entryCount)
     {
         var entries = new List<RemoteZipEntry>((int) Math.Min(entryCount, 100_000));
-        var position = directoryBase;
-        var end = directoryBase + directorySize;
+        var position = 0;
+        var end = directory.Length;
         while (entries.Count < entryCount)
         {
             if (position + 46 > end ||
@@ -229,7 +232,7 @@ public sealed class RemoteZipArchive
                 throw new RemoteZipException("Corrupt central directory.");
             }
 
-            var fullName = Encoding.UTF8.GetString(directory, position + 46, nameLength);
+            var fullName = Encoding.UTF8.GetString(directory.Slice(position + 46, nameLength));
 
             // The zip64 extended-information extra field overrides any 32/16-bit value
             // that was stored as its all-ones marker, in this fixed field order.
@@ -302,7 +305,7 @@ public sealed class RemoteZipArchive
 
     /// <summary>
     /// Downloads and decompresses multiple entries, fetching entries that sit close
-    /// together in the archive in a single request.
+    /// together in the archive in a single request and overlapping the requests that remain.
     /// </summary>
     public async Task<IReadOnlyDictionary<RemoteZipEntry, byte[]>> Read(IReadOnlyCollection<RemoteZipEntry> batch, Cancel cancel = default)
     {
@@ -312,33 +315,79 @@ public sealed class RemoteZipArchive
         }
 
         var ordered = batch.Distinct().OrderBy(_ => _.LocalHeaderOffset).ToList();
-        var results = new Dictionary<RemoteZipEntry, byte[]>();
-        var index = 0;
-        while (index < ordered.Count)
+        var clusters = BuildClusters(ordered);
+
+        // Clusters are independent requests, so they are issued together — a serial loop
+        // pays a full round trip for every one of them. The gate keeps a large batch from
+        // flooding the server; browsers cap concurrent requests per origin regardless.
+        using var gate = new SemaphoreSlim(maxConcurrency);
+        var fetched = await Task.WhenAll(clusters.Select(_ => ReadCluster(_, gate, cancel)));
+
+        var results = new Dictionary<RemoteZipEntry, byte[]>(ordered.Count);
+        foreach (var cluster in fetched)
         {
-            var clusterStart = ordered[index].LocalHeaderOffset;
-            var clusterEnd = UpperBound(ordered[index]);
-            var last = index;
-            while (last + 1 < ordered.Count &&
-                   ordered[last + 1].LocalHeaderOffset <= clusterEnd + coalesceGap &&
-                   Math.Max(clusterEnd, UpperBound(ordered[last + 1])) - clusterStart <= maxBufferLength)
+            foreach (var (entry, content) in cluster)
             {
-                last++;
-                clusterEnd = Math.Max(clusterEnd, UpperBound(ordered[last]));
+                results[entry] = content;
             }
-
-            clusterEnd = Math.Min(clusterEnd, centralDirectoryOffset);
-            var buffer = await reader.Read(clusterStart, clusterEnd - clusterStart, cancel);
-            for (var i = index; i <= last; i++)
-            {
-                results[ordered[i]] = await Extract(ordered[i], buffer, clusterStart, cancel);
-            }
-
-            index = last + 1;
         }
 
         return results;
     }
+
+    /// <summary>
+    /// Groups entries whose byte ranges are close enough that one request covering the gap
+    /// between them beats a second round trip. Pure arithmetic over the ordered entries, so
+    /// the whole request plan is known before any of it is issued.
+    /// </summary>
+    List<Cluster> BuildClusters(List<RemoteZipEntry> ordered)
+    {
+        var clusters = new List<Cluster>();
+        var index = 0;
+        while (index < ordered.Count)
+        {
+            var start = ordered[index].LocalHeaderOffset;
+            var end = UpperBound(ordered[index]);
+            var last = index;
+            while (last + 1 < ordered.Count &&
+                   ordered[last + 1].LocalHeaderOffset <= end + coalesceGap &&
+                   Math.Max(end, UpperBound(ordered[last + 1])) - start <= maxBufferLength)
+            {
+                last++;
+                end = Math.Max(end, UpperBound(ordered[last]));
+            }
+
+            clusters.Add(new(start, Math.Min(end, centralDirectoryOffset), ordered.GetRange(index, last - index + 1)));
+            index = last + 1;
+        }
+
+        return clusters;
+    }
+
+    async Task<List<KeyValuePair<RemoteZipEntry, byte[]>>> ReadCluster(Cluster cluster, SemaphoreSlim gate, Cancel cancel)
+    {
+        ReadOnlyMemory<byte> buffer;
+        await gate.WaitAsync(cancel);
+        try
+        {
+            buffer = await reader.Read(cluster.Start, cluster.End - cluster.Start, cancel);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        // Decompression runs outside the gate so it overlaps other clusters' downloads.
+        var extracted = new List<KeyValuePair<RemoteZipEntry, byte[]>>(cluster.Entries.Count);
+        foreach (var entry in cluster.Entries)
+        {
+            extracted.Add(new(entry, await Extract(entry, buffer, cluster.Start, cancel)));
+        }
+
+        return extracted;
+    }
+
+    sealed record Cluster(long Start, long End, List<RemoteZipEntry> Entries);
 
     /// <summary>Downloads an entry and decodes it as text, honoring a byte-order mark.</summary>
     public async Task<string> ReadText(RemoteZipEntry entry, Cancel cancel = default)
@@ -376,35 +425,32 @@ public sealed class RemoteZipArchive
         }
     }
 
-    async Task<byte[]> Extract(RemoteZipEntry entry, byte[] buffer, long bufferOffset, Cancel cancel)
+    async Task<byte[]> Extract(RemoteZipEntry entry, ReadOnlyMemory<byte> buffer, long bufferOffset, Cancel cancel)
     {
         var headerIndex = (int) (entry.LocalHeaderOffset - bufferOffset);
         if (headerIndex + ZipFormat.LocalHeaderLength > buffer.Length ||
-            ZipFormat.UInt32(buffer, headerIndex) != ZipFormat.LocalHeaderSignature)
+            ZipFormat.UInt32(buffer.Span, headerIndex) != ZipFormat.LocalHeaderSignature)
         {
             throw new RemoteZipException($"'{entry.FullName}' has no local header at the position the central directory claims.");
         }
 
-        int nameLength = ZipFormat.UInt16(buffer, headerIndex + 26);
-        int extraLength = ZipFormat.UInt16(buffer, headerIndex + 28);
+        int nameLength = ZipFormat.UInt16(buffer.Span, headerIndex + 26);
+        int extraLength = ZipFormat.UInt16(buffer.Span, headerIndex + 28);
         var dataStart = entry.LocalHeaderOffset + ZipFormat.LocalHeaderLength + nameLength + extraLength;
 
-        byte[] compressed;
         if (dataStart + entry.CompressedLength <= bufferOffset + buffer.Length)
         {
-            compressed = new byte[entry.CompressedLength];
-            Array.Copy(buffer, dataStart - bufferOffset, compressed, 0, compressed.Length);
-        }
-        else
-        {
-            // The local extra field was larger than the over-fetch slack: one exact request.
-            compressed = await reader.Read(dataStart, entry.CompressedLength, cancel);
+            // Already fetched — slice rather than copy. In a batched read the same buffer
+            // spans a whole cluster, so every entry in it is served without a copy.
+            return Inflate(entry, buffer.Slice((int) (dataStart - bufferOffset), (int) entry.CompressedLength));
         }
 
+        // The local extra field was larger than the over-fetch slack: one exact request.
+        var compressed = await reader.Read(dataStart, entry.CompressedLength, cancel);
         return Inflate(entry, compressed);
     }
 
-    static byte[] Inflate(RemoteZipEntry entry, byte[] compressed)
+    static byte[] Inflate(RemoteZipEntry entry, ReadOnlyMemory<byte> compressed)
     {
         byte[] result;
         if (entry.Method == 0)
@@ -414,12 +460,12 @@ public sealed class RemoteZipArchive
                 throw new RemoteZipException($"'{entry.FullName}' is stored but its compressed and uncompressed lengths differ.");
             }
 
-            result = compressed;
+            result = compressed.ToArray();
         }
         else
         {
             result = new byte[entry.Length];
-            using var deflate = new DeflateStream(new MemoryStream(compressed, false), CompressionMode.Decompress);
+            using var deflate = new DeflateStream(AsStream(compressed), CompressionMode.Decompress);
             var position = 0;
             while (position < result.Length)
             {
@@ -446,7 +492,57 @@ public sealed class RemoteZipArchive
         return result;
     }
 
-    static async Task<byte[]> ReadBounded(Stream stream, long maxLength, Cancel cancel)
+    /// <summary>
+    /// Presents a buffer to <see cref="DeflateStream" /> without copying it. Every buffer
+    /// here is backed by an array this library allocated, so the segment is always available.
+    /// </summary>
+    static Stream AsStream(ReadOnlyMemory<byte> memory)
+    {
+        if (MemoryMarshal.TryGetArray(memory, out var segment) &&
+            segment.Array != null)
+        {
+            return new MemoryStream(segment.Array, segment.Offset, segment.Count, false);
+        }
+
+        return new MemoryStream(memory.ToArray(), false);
+    }
+
+    /// <summary>
+    /// Reads a response body, refusing to buffer more than <paramref name="maxLength" />.
+    /// Both response shapes handled here carry a Content-Length, so the buffer is normally
+    /// allocated once at its final size; a response without one falls back to growing.
+    /// </summary>
+    static async Task<byte[]> ReadBounded(Stream stream, long? contentLength, long maxLength, Cancel cancel)
+    {
+        if (contentLength > maxLength)
+        {
+            throw new RemoteZipException($"Response exceeds the configured maximum of {maxLength} bytes.");
+        }
+
+        if (contentLength == null)
+        {
+            return await ReadGrowing(stream, maxLength, cancel);
+        }
+
+        var result = new byte[contentLength.Value];
+        var position = 0;
+        while (position < result.Length)
+        {
+            var read = await stream.ReadAsync(result.AsMemory(position), cancel);
+            if (read == 0)
+            {
+                // Body was shorter than advertised; hand back what arrived, as growing would.
+                Array.Resize(ref result, position);
+                break;
+            }
+
+            position += read;
+        }
+
+        return result;
+    }
+
+    static async Task<byte[]> ReadGrowing(Stream stream, long maxLength, Cancel cancel)
     {
         using var memory = new MemoryStream();
         var buffer = new byte[81920];
