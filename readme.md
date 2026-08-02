@@ -1,5 +1,6 @@
 # <img src="/src/icon.png" height="30px"> RemoteZip
 
+[![Build status](https://img.shields.io/appveyor/build/SimonCropp/RemoteZip)](https://ci.appveyor.com/project/SimonCropp/RemoteZip)
 [![NuGet Status](https://img.shields.io/nuget/v/RemoteZip.svg)](https://www.nuget.org/packages/RemoteZip/)
 
 Read entries from a remote zip over HTTP range requests, without downloading the whole archive.
