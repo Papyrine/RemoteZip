@@ -96,7 +96,7 @@ The browser HTTP cache can answer one range request with the cached body of anot
 ```csharp
 var options = new RemoteZipOptions
 {
-    ConfigureRequest = request => request.SetBrowserRequestCache(BrowserRequestCache.NoStore)
+    ConfigureRequest = _ => _.SetBrowserRequestCache(BrowserRequestCache.NoStore)
 };
 ```
 
