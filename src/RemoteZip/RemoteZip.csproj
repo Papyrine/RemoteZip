@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsAotCompatible Condition="'$(TargetFramework)' != 'netstandard2.0'">true</IsAotCompatible>
+    <PolyNullability>true</PolyNullability>
+    <PackageTags>zip;http;range;partial;download;remote;archive;nupkg;blazor;wasm</PackageTags>
+    <UserSecretsId>c7f1a7f0-3f24-4a3e-9c2f-8d5a1b6f4e21</UserSecretsId>
+  </PropertyGroup>
+  <ItemGroup>
+    <Using Include="System.Net" />
+    <Using Include="System.Net.Http" />
+    <Using Include="System.Net.Http.Headers" />
+    <Using Include="System.IO.Compression" />
+    <PackageReference Include="ProjectDefaults" PrivateAssets="all" />
+    <PackageReference Include="SponsorCheck" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Sbom.Targets" PrivateAssets="all" Condition="'$(CI)' == 'true'" />
+  </ItemGroup>
+</Project>

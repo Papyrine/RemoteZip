@@ -1,0 +1,21 @@
+﻿[
+  {
+    FullName: readme.md,
+    Length: 4,
+    IsDirectory: false
+  },
+  {
+    FullName: docs/,
+    IsDirectory: true
+  },
+  {
+    FullName: docs/a.txt,
+    Length: 3,
+    IsDirectory: false
+  },
+  {
+    FullName: lib/net10.0/app.dll,
+    Length: 16,
+    IsDirectory: false
+  }
+]
