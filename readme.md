@@ -17,18 +17,6 @@ Async all the way down, so it works from Blazor WebAssembly — the original mot
 https://nuget.org/packages/RemoteZip/
 
 
-## Contents
-
-  * [Usage](#usage)
-    * [Reading multiple entries](#reading-multiple-entries)
-  * [How it works](#how-it-works)
-  * [Fallback behavior](#fallback-behavior)
-  * [Options](#options)
-    * [Blazor WebAssembly](#blazor-webassembly)
-  * [Server requirements](#server-requirements)
-  * [Limitations](#limitations)<!-- endToc -->
-
-
 ## Usage
 
 <!-- snippet: usage -->
