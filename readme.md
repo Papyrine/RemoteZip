@@ -67,6 +67,26 @@ public static async Task<string?> ReadNuspec(HttpClient http, string packageUrl)
 <!-- endSnippet -->
 
 
+### Reading by name
+
+For a known set of files, `Read` / `ReadText` accept names directly and return name-keyed results — no `Find` calls, no null checks, same coalescing:
+
+<!-- snippet: read-by-name -->
+<a id='snippet-read-by-name'></a>
+```cs
+public static async Task<string?> ReadLicense(HttpClient http, string url)
+{
+    var zip = await RemoteZipArchive.Open(http, url);
+
+    // Names with no matching entry are simply absent from the result.
+    var texts = await zip.ReadText(["license.md", "license.txt"]);
+    return texts.GetValueOrDefault("license.md") ?? texts.GetValueOrDefault("license.txt");
+}
+```
+<sup><a href='/src/RemoteZip.Tests/Usage.cs#L37-L46' title='Snippet source file'>snippet source</a> | <a href='#snippet-read-by-name' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+
 ## How it works
 
 Opening sends one suffix range request (`Range: bytes=-131072`) and parses the end-of-central-directory record from it. For typical archives the whole central directory is inside that tail, so enumeration costs exactly one request; an oversized central directory costs one more. Each `Read` then fetches `local header + entry data` in one range request, over-fetching by 512 bytes to cover local extra fields; a batched `Read` merges entries whose ranges are within 8 KB of each other.
@@ -104,6 +124,31 @@ var options = new RemoteZipOptions
 ## Server requirements
 
 The server must support `Range` requests (`206 Partial Content`). For browser use it must also allow the `Range` header in its CORS policy (`Access-Control-Allow-Headers: range`). Exposing `Content-Range` is *not* required. nuget.org's flat container satisfies all of this, including from `localhost` origins.
+
+
+## Testing consumers
+
+`StubZipServer` ships in the package: an `HttpMessageHandler` that serves an in-memory `byte[]` with the Range semantics observed on nuget.org — 206 slices, suffix ranges, 200-with-full-body for unsatisfiable ranges. `SupportRanges = false` simulates a server without range support, `ExposeContentRange = false` simulates browser CORS hiding the header, and `Requests` / `HeaderLog` / `BytesServed` / `MaxConcurrentRequests` record the traffic so tests can assert fetch efficiency as well as correctness:
+
+<!-- snippet: stub-zip-server -->
+<a id='snippet-stub-zip-server'></a>
+```cs
+[Test]
+public async Task StubServesRanges()
+{
+    var server = new StubZipServer(SampleZipBytes());
+    using var client = new HttpClient(server);
+
+    var archive = await RemoteZipArchive.Open(client, "https://example/archive.zip");
+    var text = await archive.ReadText(archive.Find("readme.md")!);
+
+    await Assert.That(text).IsEqualTo("# Sample");
+    // Requests, HeaderLog, BytesServed and MaxConcurrentRequests record the traffic.
+    await Assert.That(server.Requests).Count().IsEqualTo(1);
+}
+```
+<sup><a href='/src/RemoteZip.Tests/TestingUsage.cs#L3-L17' title='Snippet source file'>snippet source</a> | <a href='#snippet-stub-zip-server' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
 
 
 ## Limitations

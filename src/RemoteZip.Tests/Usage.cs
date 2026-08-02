@@ -34,6 +34,17 @@ public class Usage
     }
     // end-snippet
 
+    // begin-snippet: read-by-name
+    public static async Task<string?> ReadLicense(HttpClient http, string url)
+    {
+        var zip = await RemoteZipArchive.Open(http, url);
+
+        // Names with no matching entry are simply absent from the result.
+        var texts = await zip.ReadText(["license.md", "license.txt"]);
+        return texts.GetValueOrDefault("license.md") ?? texts.GetValueOrDefault("license.txt");
+    }
+    // end-snippet
+
     [Test]
     public async Task Runs()
     {
@@ -42,6 +53,18 @@ public class Usage
         using (client)
         {
             await PrintRemoteZip(client, "https://example/archive.zip");
+        }
+    }
+
+    [Test]
+    public async Task ReadLicenseRuns()
+    {
+        var data = Zips.Normal(("license.txt", "MIT"), ("lib/app.dll", "not really a dll"));
+        var (client, _) = Zips.Serve(data);
+        using (client)
+        {
+            var license = await ReadLicense(client, "https://example/archive.zip");
+            await Assert.That(license).IsEqualTo("MIT");
         }
     }
 

@@ -389,10 +389,81 @@ public sealed class RemoteZipArchive
 
     sealed record Cluster(long Start, long End, List<RemoteZipEntry> Entries);
 
+    /// <summary>
+    /// Downloads and decompresses the named entries, keyed by those names. A name with no
+    /// matching entry is simply absent from the result rather than an error, so probing
+    /// for optional files needs no existence checks. Fetching follows the same plan as the
+    /// entry batch: close entries coalesce into one request, remaining requests overlap.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, byte[]>> Read(IReadOnlyCollection<string> fullNames, Cancel cancel = default)
+    {
+        var found = ResolveNames(fullNames);
+        var contents = await Read(found.Values, cancel);
+        var results = new Dictionary<string, byte[]>(found.Count);
+        foreach (var (name, entry) in found)
+        {
+            results[name] = contents[entry];
+        }
+
+        return results;
+    }
+
+    /// <summary>Downloads the named entries and decodes each as text, honoring byte-order marks.</summary>
+    public async Task<IReadOnlyDictionary<string, string>> ReadText(IReadOnlyCollection<string> fullNames, Cancel cancel = default)
+    {
+        var contents = await Read(fullNames, cancel);
+        var results = new Dictionary<string, string>(contents.Count);
+        foreach (var (name, bytes) in contents)
+        {
+            results[name] = await DecodeText(bytes, cancel);
+        }
+
+        return results;
+    }
+
+    /// <summary>Downloads and decompresses multiple entries, decoding each as text, honoring byte-order marks.</summary>
+    public async Task<IReadOnlyDictionary<RemoteZipEntry, string>> ReadText(IReadOnlyCollection<RemoteZipEntry> batch, Cancel cancel = default)
+    {
+        var contents = await Read(batch, cancel);
+        var results = new Dictionary<RemoteZipEntry, string>(contents.Count);
+        foreach (var (entry, bytes) in contents)
+        {
+            results[entry] = await DecodeText(bytes, cancel);
+        }
+
+        return results;
+    }
+
+    /// <summary>First matching entry per distinct name; names without a match are skipped.</summary>
+    Dictionary<string, RemoteZipEntry> ResolveNames(IReadOnlyCollection<string> fullNames)
+    {
+        var found = new Dictionary<string, RemoteZipEntry>(fullNames.Count);
+        foreach (var name in fullNames)
+        {
+            if (found.ContainsKey(name))
+            {
+                continue;
+            }
+
+            var entry = Find(name);
+            if (entry != null)
+            {
+                found[name] = entry;
+            }
+        }
+
+        return found;
+    }
+
     /// <summary>Downloads an entry and decodes it as text, honoring a byte-order mark.</summary>
     public async Task<string> ReadText(RemoteZipEntry entry, Cancel cancel = default)
     {
         var bytes = await Read(entry, cancel);
+        return await DecodeText(bytes, cancel);
+    }
+
+    static async Task<string> DecodeText(byte[] bytes, Cancel cancel)
+    {
         using var streamReader = new StreamReader(new MemoryStream(bytes));
         return await streamReader.ReadToEndAsync(cancel);
     }

@@ -28,4 +28,6 @@ public static async Task PrintRemoteZip(HttpClient http, string url)
 
 Servers without range support degrade transparently to a bounded full download. Zip64 is supported; every read is crc-validated.
 
+`StubZipServer` ships alongside, for testing consumers against nuget.org-faithful Range behavior without a network.
+
 See the [project documentation](https://github.com/Papyrine/RemoteZip) for how it works, options, and server requirements.

@@ -2,7 +2,7 @@
 <Project>
   <PropertyGroup>
     <NoWarn>CS1591;NU1608;NU1109;NU1901;PolyfillTargetsForNuget;SC023</NoWarn>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <AssemblyVersion>1.0.0</AssemblyVersion>
     <Description>Read entries from a remote zip over HTTP range requests, without downloading the whole archive. Works from Blazor WebAssembly.</Description>
     <ResolveAssemblyReferencesSilent>true</ResolveAssemblyReferencesSilent>
