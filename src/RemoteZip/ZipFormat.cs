@@ -1,5 +1,3 @@
-namespace RemoteZip;
-
 /// <summary>
 /// Little-endian readers and record layouts for the zip format (PKWARE APPNOTE 4.3.x).
 /// All offsets here mirror the spec; the central directory — not local headers — is the
