@@ -62,18 +62,18 @@ public sealed class RemoteZipArchive
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Headers.Range = new RangeHeaderValue(null, tailLength);
         options.ConfigureRequest?.Invoke(request);
-        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancel);
         response.EnsureSuccessStatusCode();
-        using var content = await response.Content.ReadAsStreamAsync(cancel).ConfigureAwait(false);
+        using var content = await response.Content.ReadAsStreamAsync(cancel);
 
         if (response.StatusCode != HttpStatusCode.PartialContent)
         {
             // No range support: buffer the whole archive, bounded.
-            var whole = await ReadBounded(content, options.MaxBufferLength, cancel).ConfigureAwait(false);
-            return await Build(null, whole, 0, whole.Length, options, cancel).ConfigureAwait(false);
+            var whole = await ReadBounded(content, options.MaxBufferLength, cancel);
+            return await Build(null, whole, 0, whole.Length, options, cancel);
         }
 
-        var tail = await ReadBounded(content, tailLength, cancel).ConfigureAwait(false);
+        var tail = await ReadBounded(content, tailLength, cancel);
 
         // Content-Range gives the tail's absolute position directly, but CORS hides the
         // header from browser callers (it is rarely in Access-Control-Expose-Headers, and
@@ -88,7 +88,7 @@ public sealed class RemoteZipArchive
         }
 
         var httpReader = new HttpRangeReader(http, uri, options.ConfigureRequest);
-        return await Build(httpReader, tail, tailStart, knownLength, options, cancel).ConfigureAwait(false);
+        return await Build(httpReader, tail, tailStart, knownLength, options, cancel);
     }
 
     static async Task<RemoteZipArchive> Build(
@@ -173,7 +173,7 @@ public sealed class RemoteZipArchive
                 throw new RemoteZipException("Corrupt central directory position.");
             }
 
-            directory = await httpReader.Read(directoryOffset, directorySize, cancel).ConfigureAwait(false);
+            directory = await httpReader.Read(directoryOffset, directorySize, cancel);
             directoryBase = 0;
         }
 
@@ -292,8 +292,8 @@ public sealed class RemoteZipArchive
         Validate(entry);
         var start = entry.LocalHeaderOffset;
         var end = Math.Min(UpperBound(entry), centralDirectoryOffset);
-        var buffer = await reader.Read(start, end - start, cancel).ConfigureAwait(false);
-        return await Extract(entry, buffer, start, cancel).ConfigureAwait(false);
+        var buffer = await reader.Read(start, end - start, cancel);
+        return await Extract(entry, buffer, start, cancel);
     }
 
     /// <summary>
@@ -324,10 +324,10 @@ public sealed class RemoteZipArchive
             }
 
             clusterEnd = Math.Min(clusterEnd, centralDirectoryOffset);
-            var buffer = await reader.Read(clusterStart, clusterEnd - clusterStart, cancel).ConfigureAwait(false);
+            var buffer = await reader.Read(clusterStart, clusterEnd - clusterStart, cancel);
             for (var i = index; i <= last; i++)
             {
-                results[ordered[i]] = await Extract(ordered[i], buffer, clusterStart, cancel).ConfigureAwait(false);
+                results[ordered[i]] = await Extract(ordered[i], buffer, clusterStart, cancel);
             }
 
             index = last + 1;
@@ -339,9 +339,9 @@ public sealed class RemoteZipArchive
     /// <summary>Downloads an entry and decodes it as text, honoring a byte-order mark.</summary>
     public async Task<string> ReadText(RemoteZipEntry entry, Cancel cancel = default)
     {
-        var bytes = await Read(entry, cancel).ConfigureAwait(false);
+        var bytes = await Read(entry, cancel);
         using var streamReader = new StreamReader(new MemoryStream(bytes));
-        return await streamReader.ReadToEndAsync();
+        return await streamReader.ReadToEndAsync(cancel);
     }
 
     static long UpperBound(RemoteZipEntry entry) =>
@@ -392,7 +392,7 @@ public sealed class RemoteZipArchive
         else
         {
             // The local extra field was larger than the over-fetch slack: one exact request.
-            compressed = await reader.Read(dataStart, entry.CompressedLength, cancel).ConfigureAwait(false);
+            compressed = await reader.Read(dataStart, entry.CompressedLength, cancel);
         }
 
         return Inflate(entry, compressed);
