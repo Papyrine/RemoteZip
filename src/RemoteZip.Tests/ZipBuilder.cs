@@ -33,7 +33,7 @@ class ZipBuilder
 
         foreach (var entry in entries)
         {
-            var crc = entry.CrcOverride ?? Crc32(entry.Content);
+            var crc = entry.CrcOverride ?? Crc32.HashToUInt32(entry.Content);
             var data = entry.Method == 8 ? Deflate(entry.Content) : entry.Content;
             var name = Encoding.UTF8.GetBytes(entry.Name);
             records.Add((entry, stream.Position, data, crc, name));
@@ -133,35 +133,5 @@ class ZipBuilder
         }
 
         return output.ToArray();
-    }
-
-    static readonly uint[] crcTable = BuildCrcTable();
-
-    static uint[] BuildCrcTable()
-    {
-        var table = new uint[256];
-        for (uint i = 0; i < 256; i++)
-        {
-            var value = i;
-            for (var bit = 0; bit < 8; bit++)
-            {
-                value = (value & 1) != 0 ? 0xEDB88320 ^ value >> 1 : value >> 1;
-            }
-
-            table[i] = value;
-        }
-
-        return table;
-    }
-
-    public static uint Crc32(byte[] data)
-    {
-        var crc = 0xFFFFFFFF;
-        foreach (var b in data)
-        {
-            crc = crcTable[(crc ^ b) & 0xFF] ^ crc >> 8;
-        }
-
-        return crc ^ 0xFFFFFFFF;
     }
 }

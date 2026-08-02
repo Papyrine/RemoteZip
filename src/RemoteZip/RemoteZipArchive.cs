@@ -60,7 +60,7 @@ public sealed class RemoteZipArchive
         var tailLength = Math.Max(options.TailLength, ZipFormat.EndOfCentralDirectoryLength);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-        request.Headers.Range = new RangeHeaderValue(null, tailLength);
+        request.Headers.Range = new(null, tailLength);
         options.ConfigureRequest?.Invoke(request);
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancel);
         response.EnsureSuccessStatusCode();
@@ -120,7 +120,8 @@ public sealed class RemoteZipArchive
         if (entryCount == 0xFFFF || directorySize == 0xFFFFFFFF || directoryOffset == 0xFFFFFFFF)
         {
             var locatorIndex = eocdIndex - ZipFormat.Zip64LocatorLength;
-            if (locatorIndex < 0 || ZipFormat.UInt32(tail, locatorIndex) != ZipFormat.Zip64LocatorSignature)
+            if (locatorIndex < 0 ||
+                ZipFormat.UInt32(tail, locatorIndex) != ZipFormat.Zip64LocatorSignature)
             {
                 throw new RemoteZipException("zip64 markers present but the zip64 locator record is missing.");
             }
@@ -177,7 +178,8 @@ public sealed class RemoteZipArchive
             directoryBase = 0;
         }
 
-        if (directorySize >= 4 && ZipFormat.UInt32(directory, directoryBase) != ZipFormat.CentralDirectorySignature)
+        if (directorySize >= 4 &&
+            ZipFormat.UInt32(directory, directoryBase) != ZipFormat.CentralDirectorySignature)
         {
             throw new RemoteZipException(
                 "Central directory is not at the position the end-of-central-directory record claims. Archives with prepended data are not supported.");
@@ -231,7 +233,9 @@ public sealed class RemoteZipArchive
 
             // The zip64 extended-information extra field overrides any 32/16-bit value
             // that was stored as its all-ones marker, in this fixed field order.
-            if (length == 0xFFFFFFFF || compressedLength == 0xFFFFFFFF || localHeaderOffset == 0xFFFFFFFF)
+            if (length == 0xFFFFFFFF ||
+                compressedLength == 0xFFFFFFFF ||
+                localHeaderOffset == 0xFFFFFFFF)
             {
                 var extraPosition = position + 46 + nameLength;
                 var extraEnd = extraPosition + extraLength;
@@ -354,12 +358,14 @@ public sealed class RemoteZipArchive
             throw new RemoteZipException($"'{entry.FullName}' is encrypted. Encrypted entries are not supported.");
         }
 
-        if (entry.Method != 0 && entry.Method != 8)
+        if (entry.Method != 0 &&
+            entry.Method != 8)
         {
             throw new RemoteZipException($"'{entry.FullName}' uses compression method {entry.Method}. Only stored (0) and deflate (8) are supported.");
         }
 
-        if (entry.Length > maxBufferLength || entry.CompressedLength > maxBufferLength)
+        if (entry.Length > maxBufferLength ||
+            entry.CompressedLength > maxBufferLength)
         {
             throw new RemoteZipException($"'{entry.FullName}' exceeds MaxBufferLength ({maxBufferLength} bytes).");
         }
@@ -432,7 +438,7 @@ public sealed class RemoteZipArchive
             }
         }
 
-        if (ZipFormat.Crc32(result) != entry.Crc)
+        if (Crc32.HashToUInt32(result) != entry.Crc)
         {
             throw new RemoteZipException($"'{entry.FullName}' failed crc validation.");
         }
@@ -445,7 +451,7 @@ public sealed class RemoteZipArchive
         using var memory = new MemoryStream();
         var buffer = new byte[81920];
         int read;
-        while ((read = await stream.ReadAsync(buffer, 0, buffer.Length, cancel).ConfigureAwait(false)) > 0)
+        while ((read = await stream.ReadAsync(buffer, cancel)) > 0)
         {
             memory.Write(buffer, 0, read);
             if (memory.Length > maxLength)

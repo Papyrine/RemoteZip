@@ -13,7 +13,7 @@ sealed class HttpRangeReader(HttpClient http, Uri uri, Action<HttpRequestMessage
         configureRequest?.Invoke(request);
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancel);
         response.EnsureSuccessStatusCode();
-        using var stream = await response.Content.ReadAsStreamAsync(cancel);
+        await using var stream = await response.Content.ReadAsStreamAsync(cancel);
         if (response.StatusCode != HttpStatusCode.PartialContent)
         {
             await Skip(stream, offset, cancel);
@@ -27,7 +27,7 @@ sealed class HttpRangeReader(HttpClient http, Uri uri, Action<HttpRequestMessage
         var buffer = new byte[81920];
         while (count > 0)
         {
-            var read = await stream.ReadAsync(buffer, 0, (int) Math.Min(buffer.Length, count), cancel);
+            var read = await stream.ReadAsync(buffer.AsMemory(0, (int) Math.Min(buffer.Length, count)), cancel);
             if (read == 0)
             {
                 throw new RemoteZipException("Response ended before the requested range started.");
@@ -43,7 +43,7 @@ sealed class HttpRangeReader(HttpClient http, Uri uri, Action<HttpRequestMessage
         var position = 0;
         while (position < result.Length)
         {
-            var read = await stream.ReadAsync(result, position, result.Length - position, cancel);
+            var read = await stream.ReadAsync(result.AsMemory(position, result.Length - position), cancel);
             if (read == 0)
             {
                 throw new RemoteZipException("Response ended before the requested range was fully served.");

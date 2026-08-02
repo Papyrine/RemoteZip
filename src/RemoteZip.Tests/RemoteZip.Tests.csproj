@@ -9,6 +9,7 @@
     <Using Include="System.Net.Http" />
     <Using Include="System.Net.Http.Headers" />
     <Using Include="System.IO.Compression" />
+    <Using Include="System.IO.Hashing" />
     <PackageReference Include="MarkdownSnippets.MsBuild" PrivateAssets="all" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
