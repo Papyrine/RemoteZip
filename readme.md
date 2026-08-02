@@ -11,11 +11,12 @@ Async all the way down, so it works from Blazor WebAssembly — the original mot
 
 **See [Milestones](../../milestones?state=closed) for release notes.**
 
+
 ## NuGet package
 
 https://nuget.org/packages/RemoteZip/
 
-<!-- toc -->
+
 ## Contents
 
   * [Usage](#usage)
@@ -26,6 +27,7 @@ https://nuget.org/packages/RemoteZip/
     * [Blazor WebAssembly](#blazor-webassembly)
   * [Server requirements](#server-requirements)
   * [Limitations](#limitations)<!-- endToc -->
+
 
 ## Usage
 
@@ -51,6 +53,7 @@ public static async Task PrintRemoteZip(HttpClient http, string url)
 <sup><a href='/src/RemoteZip.Tests/Usage.cs#L3-L19' title='Snippet source file'>snippet source</a> | <a href='#snippet-usage' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
+
 ### Reading multiple entries
 
 Entries that sit close together in the archive coalesce into a single request:
@@ -75,6 +78,7 @@ public static async Task<string?> ReadNuspec(HttpClient http, string packageUrl)
 <sup><a href='/src/RemoteZip.Tests/Usage.cs#L21-L35' title='Snippet source file'>snippet source</a> | <a href='#snippet-batch-read' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
+
 ## How it works
 
 Opening sends one suffix range request (`Range: bytes=-131072`) and parses the end-of-central-directory record from it. For typical archives the whole central directory is inside that tail, so enumeration costs exactly one request; an oversized central directory costs one more. Each `Read` then fetches `local header + entry data` in one range request, over-fetching by 512 bytes to cover local extra fields; a batched `Read` merges entries whose ranges are within 8 KB of each other.
@@ -87,6 +91,7 @@ Zip64 archives are supported. Entries must be stored or deflated (the only metho
 
 Servers that ignore range requests (plain `200` responses) degrade transparently: the archive is buffered in full — bounded by `MaxBufferLength` — and reads are served from memory. The same happens when the file is smaller than the tail request. `DownloadedWholeFile` reports which mode an archive ended up in. A server answering a *valid* range request with `200` mid-session (observed on nuget.org's CDN for cold edge caches) is also handled per request.
 
+
 ## Options
 
 | Option | Default | Purpose |
@@ -94,6 +99,7 @@ Servers that ignore range requests (plain `200` responses) degrade transparently
 | `TailLength` | 128 KiB | Size of the opening suffix request. The default always contains the end-of-central-directory record and, for typical archives, the whole central directory. |
 | `MaxBufferLength` | 1 GiB | Cap on full-download fallback and on any single entry read. |
 | `ConfigureRequest` | — | Applied to every outgoing request. |
+
 
 ### Blazor WebAssembly
 
@@ -106,16 +112,14 @@ var options = new RemoteZipOptions
 };
 ```
 
+
 ## Server requirements
 
 The server must support `Range` requests (`206 Partial Content`). For browser use it must also allow the `Range` header in its CORS policy (`Access-Control-Allow-Headers: range`). Exposing `Content-Range` is *not* required. nuget.org's flat container satisfies all of this, including from `localhost` origins.
+
 
 ## Limitations
 
 - Encrypted entries and compression methods other than stored/deflate throw.
 - Archives with data prepended to the zip (self-extracting layouts) are rejected.
 - Entry names are decoded as UTF-8 regardless of the cp437 flag; non-ASCII names in ancient archives may decode differently than intended.
-
-## Icon
-
-Original artwork created for this project.
