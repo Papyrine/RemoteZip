@@ -15,7 +15,6 @@
     <Using Include="System.Runtime.InteropServices" />
     <PackageReference Include="System.IO.Hashing" />
     <PackageReference Include="ProjectDefaults" PrivateAssets="all" />
-    <PackageReference Include="SponsorCheck" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Sbom.Targets" PrivateAssets="all" Condition="'$(CI)' == 'true'" />
   </ItemGroup>
 </Project>
