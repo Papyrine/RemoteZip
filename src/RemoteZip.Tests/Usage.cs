@@ -30,7 +30,12 @@ public class Usage
         var contents = await zip.Read(wanted);
 
         var nuspec = wanted.FirstOrDefault(_ => _.FullName.EndsWith(".nuspec"));
-        return nuspec == null ? null : Encoding.UTF8.GetString(contents[nuspec]);
+        if (nuspec == null)
+        {
+            return null;
+        }
+
+        return Encoding.UTF8.GetString(contents[nuspec]);
     }
     // end-snippet
 
