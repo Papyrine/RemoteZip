@@ -60,10 +60,15 @@ public static async Task<string?> ReadNuspec(HttpClient http, string packageUrl)
     var contents = await zip.Read(wanted);
 
     var nuspec = wanted.FirstOrDefault(_ => _.FullName.EndsWith(".nuspec"));
-    return nuspec == null ? null : Encoding.UTF8.GetString(contents[nuspec]);
+    if (nuspec == null)
+    {
+        return null;
+    }
+
+    return Encoding.UTF8.GetString(contents[nuspec]);
 }
 ```
-<sup><a href='/src/RemoteZip.Tests/Usage.cs#L21-L35' title='Snippet source file'>snippet source</a> | <a href='#snippet-batch-read' title='Start of snippet'>anchor</a></sup>
+<sup><a href='/src/RemoteZip.Tests/Usage.cs#L21-L40' title='Snippet source file'>snippet source</a> | <a href='#snippet-batch-read' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 
@@ -83,7 +88,7 @@ public static async Task<string?> ReadLicense(HttpClient http, string url)
     return texts.GetValueOrDefault("license.md") ?? texts.GetValueOrDefault("license.txt");
 }
 ```
-<sup><a href='/src/RemoteZip.Tests/Usage.cs#L37-L46' title='Snippet source file'>snippet source</a> | <a href='#snippet-read-by-name' title='Start of snippet'>anchor</a></sup>
+<sup><a href='/src/RemoteZip.Tests/Usage.cs#L42-L51' title='Snippet source file'>snippet source</a> | <a href='#snippet-read-by-name' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 
